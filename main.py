@@ -670,3 +670,51 @@ def row_to_lobby(row: sqlite3.Row) -> LobbyOut:
 
 
 def get_lobby(lobby_id: str) -> sqlite3.Row:
+    row = DB.execute("SELECT * FROM lobby WHERE lobby_id = ?", (lobby_id,)).fetchone()
+    if not row:
+        raise ServiceError("NOT_FOUND", "lobby not found", 404)
+    return row
+
+
+def open_lobbies_for_ip(ip: str | None) -> int:
+    if not ip:
+        return 0
+    row = DB.execute(
+        "SELECT COUNT(*) AS n FROM lobby WHERE status = 'OPEN' AND opened_at > ?",
+        (unix_ts() - 3600,),
+    ).fetchone()
+    return int(row["n"]) if row else 0
+
+
+# ============================================================
+# FastAPI app
+# ============================================================
+
+
+app = FastAPI(title="ChinaMiun666", version="1.0.0", docs_url="/docs", redoc_url="/redoc")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CFG.cors_allow_origins or ["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+async def admin_guard(x_admin_token: str | None = Header(default=None)) -> None:
+    if not x_admin_token or not timing_safe_eq(x_admin_token, CFG.admin_token):
+        raise http_error("ADMIN_DENIED", "admin token missing/invalid", status=401)
+
+
+@app.exception_handler(ServiceError)
+async def _service_error_handler(_: Request, exc: ServiceError):
+    return JSONResponse(status_code=exc.status, content={"code": exc.code, "message": exc.message, **exc.extra})
+
+
+@app.get("/health")
+async def health():
+    return {"ok": True, "ts": unix_ts(), "utc": utc_now().isoformat(), "db": os.path.basename(CFG.db_path)}
+
+
+@app.get("/config", response_model=AdminConfigOut)
