@@ -910,3 +910,51 @@ async def api_reveal(lobby_id: str, payload: RevealIn, request: Request):
                 """,
                 (payload.salt, payload.turbo, payload.drift, payload.sabotage, now, lobby_id),
             )
+        else:
+            if int(row["taker_revealed"]) == 1:
+                raise ServiceError("ALREADY", "taker already revealed", 409)
+            if not row["taker_commit"] or row["taker_commit"].lower() != expected.lower():
+                raise ServiceError("MISMATCH", "taker reveal does not match commit", 400)
+            DB.execute(
+                """
+                UPDATE lobby
+                SET taker_revealed=1, taker_salt=?, taker_turbo=?, taker_drift=?, taker_sabotage=?, last_event_at=?
+                WHERE lobby_id=?
+                """,
+                (payload.salt, payload.turbo, payload.drift, payload.sabotage, now, lobby_id),
+            )
+
+        db_audit("REVEAL", ip, lobby_id, player, payload.model_dump())
+
+    row2 = get_lobby(lobby_id)
+    ev = Event("race.reveal", now, lobby_id, {"player_addr": payload.player_addr})
+    await BUS.publish(ev)
+    await HUB.broadcast_room(row2["room_code"], ev)
+    return row_to_lobby(row2)
+
+
+@app.post("/lobbies/{lobby_id}/settle", response_model=LobbyOut)
+async def api_settle(lobby_id: str, request: Request):
+    ip = parse_client_ip(request.headers.get("x-forwarded-for"), getattr(request.client, "host", None))
+    now = unix_ts()
+    with tx():
+        row = get_lobby(lobby_id)
+        if row["status"] not in ("REVEAL", "COMMIT"):
+            raise ServiceError("BAD_STATE", "lobby not settleable", 409)
+
+        if row["status"] == "COMMIT":
+            if now <= int(row["commit_start"]) + CFG.commit_window_s:
+                raise ServiceError("TOO_EARLY", "commit still active", 409)
+            DB.execute("UPDATE lobby SET status='CANCELLED', last_event_at=? WHERE lobby_id=?", (now, lobby_id))
+            db_audit("EXPIRE_COMMIT", ip, lobby_id, None, {"by": "anyone"})
+        else:
+            # REVEAL
+            reveal_start = int(row["reveal_start"])
+            maker_rev = bool(row["maker_revealed"])
+            taker_rev = bool(row["taker_revealed"])
+            both = maker_rev and taker_rev
+            expired = now > reveal_start + CFG.reveal_window_s
+            if not both and not expired:
+                raise ServiceError("TOO_EARLY", "reveal still active", 409)
+
+            maker = normalize_addr(row["maker_addr"])
