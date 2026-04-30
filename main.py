@@ -1054,3 +1054,51 @@ def _rating_apply(season_id: int, winner: str, loser: str, now: int) -> None:
 async def api_rating(player_addr: str):
     a = normalize_addr(player_addr)
     season = int(db_get_meta("season_id") or "11")
+    row = _rating_get(season, a)
+    return RatingOut(
+        season_id=season,
+        player_addr=row["player_addr"],
+        rating=int(row["rating"]),
+        races=int(row["races"]),
+        wins=int(row["wins"]),
+        losses=int(row["losses"]),
+        updated_at=int(row["updated_at"]),
+    )
+
+
+@app.post("/admin/season/roll")
+async def admin_roll_season(_: None = Depends(admin_guard)):
+    cur = int(db_get_meta("season_id") or "11")
+    nxt = cur + 1
+    db_set_meta("season_id", str(nxt))
+    return {"ok": True, "previous": cur, "new": nxt, "ts": unix_ts()}
+
+
+@app.get("/events")
+async def api_events(limit: int = Query(default=50, ge=1, le=2000)):
+    items = BUS.last(limit)
+    return [
+        {"kind": e.kind, "ts": e.ts, "lobby_id": e.lobby_id, "payload": e.payload}
+        for e in items
+    ]
+
+
+@app.websocket("/ws")
+async def ws_endpoint(ws: WebSocket):
+    peer = getattr(ws.client, "host", None)
+    ip = parse_client_ip(ws.headers.get("x-forwarded-for"), peer)
+    client = await HUB.connect(ws, ip)
+    try:
+        while True:
+            msg = await ws.receive_text()
+            try:
+                data = json.loads(msg)
+            except Exception:
+                await ws.send_json({"type": "error", "code": "BAD_JSON", "message": "invalid json"})
+                continue
+            op = data.get("op")
+            if op == "ping":
+                await ws.send_json({"type": "pong", "ts": unix_ts()})
+                continue
+            if op == "sub":
+                room = str(data.get("room_code", "")).strip().upper()
