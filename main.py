@@ -1006,3 +1006,51 @@ def _rating_get(season_id: int, player_addr: str) -> sqlite3.Row:
         DB.execute(
             """
             INSERT INTO rating(season_id, player_addr, rating, races, wins, losses, updated_at)
+            VALUES(?, ?, 1200, 0, 0, 0, ?)
+            """,
+            (season_id, player_addr, unix_ts()),
+        )
+        row = DB.execute(
+            "SELECT * FROM rating WHERE season_id=? AND player_addr=?",
+            (season_id, player_addr),
+        ).fetchone()
+    return row
+
+
+def _rating_apply(season_id: int, winner: str, loser: str, now: int) -> None:
+    wrow = _rating_get(season_id, winner)
+    lrow = _rating_get(season_id, loser)
+    w_old = int(wrow["rating"])
+    l_old = int(lrow["rating"])
+    diff = abs(w_old - l_old)
+    swing = clamp_int(diff // 6, 0, 120)
+    w_exp = (6000 + swing) if w_old >= l_old else (6000 - swing)
+    l_exp = 10_000 - w_exp
+    k = 28
+    if int(wrow["races"]) < 6:
+        k += 10
+    if int(lrow["races"]) < 6:
+        k += 10
+    k = min(k, 52)
+    w_delta = int((k * (10_000 - w_exp)) / 10_000)
+    l_delta = -int((k * (10_000 - l_exp)) / 10_000)
+    w_new = clamp_int(w_old + w_delta, 700, 2600)
+    l_new = clamp_int(l_old + l_delta, 700, 2600)
+    DB.execute(
+        """
+        UPDATE rating SET rating=?, races=races+1, wins=wins+1, updated_at=? WHERE season_id=? AND player_addr=?
+        """,
+        (w_new, now, season_id, winner),
+    )
+    DB.execute(
+        """
+        UPDATE rating SET rating=?, races=races+1, losses=losses+1, updated_at=? WHERE season_id=? AND player_addr=?
+        """,
+        (l_new, now, season_id, loser),
+    )
+
+
+@app.get("/ratings/{player_addr}", response_model=RatingOut)
+async def api_rating(player_addr: str):
+    a = normalize_addr(player_addr)
+    season = int(db_get_meta("season_id") or "11")
