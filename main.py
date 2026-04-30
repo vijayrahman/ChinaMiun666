@@ -958,3 +958,51 @@ async def api_settle(lobby_id: str, request: Request):
                 raise ServiceError("TOO_EARLY", "reveal still active", 409)
 
             maker = normalize_addr(row["maker_addr"])
+            taker = normalize_addr(row["taker_addr"] or "")
+            seed = make_seed(lobby_id, maker, taker, row["maker_salt"], row["taker_salt"])
+
+            m = {
+                "turbo": int(row["maker_turbo"] or 0),
+                "drift": int(row["maker_drift"] or 0),
+                "sabotage": int(row["maker_sabotage"] or 0),
+            }
+            t_ = {
+                "turbo": int(row["taker_turbo"] or 0),
+                "drift": int(row["taker_drift"] or 0),
+                "sabotage": int(row["taker_sabotage"] or 0),
+            }
+            m_time, t_time = race_times(seed, int(row["laps"]), int(row["track_id"]), m, t_, maker_rev, taker_rev)
+            winner, loser = pick_winner(maker, taker, m_time, t_time, maker_rev, taker_rev, seed)
+            pot = int(row["stake_wei"]) * 2
+            fee = (pot * 225) // 10_000
+
+            DB.execute(
+                """
+                UPDATE lobby
+                SET status='SETTLED', settle_seed=?, maker_time=?, taker_time=?, winner_addr=?, pot_wei=?, fee_wei=?, last_event_at=?
+                WHERE lobby_id=?
+                """,
+                (seed, m_time, t_time, winner, pot, fee, now, lobby_id),
+            )
+
+            # rating: simplistic, per-season meta
+            season = int(db_get_meta("season_id") or "11")
+            _rating_apply(season, winner, loser, now)
+            db_audit("SETTLE", ip, lobby_id, winner, {"winner": winner, "loser": loser, "seed": seed})
+
+    row2 = get_lobby(lobby_id)
+    ev = Event("race.settled", now, lobby_id, {"status": row2["status"], "winner": row2["winner_addr"]})
+    await BUS.publish(ev)
+    await HUB.broadcast_room(row2["room_code"], ev)
+    return row_to_lobby(row2)
+
+
+def _rating_get(season_id: int, player_addr: str) -> sqlite3.Row:
+    row = DB.execute(
+        "SELECT * FROM rating WHERE season_id=? AND player_addr=?",
+        (season_id, player_addr),
+    ).fetchone()
+    if not row:
+        DB.execute(
+            """
+            INSERT INTO rating(season_id, player_addr, rating, races, wins, losses, updated_at)
