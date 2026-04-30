@@ -1198,3 +1198,51 @@ async def _shutdown():
 
 
 # ============================================================
+# Minimal root page (optional)
+# ============================================================
+
+
+ROOT_HTML = """
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ChinaMiun666</title>
+    <style>
+      body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; padding: 24px; background: #0b0f14; color: #e7eef7; }
+      code { background: rgba(255,255,255,0.06); padding: 2px 6px; border-radius: 6px; }
+      a { color: #8ad; }
+      .card { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); padding: 16px; border-radius: 12px; max-width: 880px; }
+      .row { display: flex; gap: 12px; flex-wrap: wrap; }
+      .pill { display: inline-block; padding: 6px 10px; border-radius: 999px; background: rgba(120,180,255,0.10); border: 1px solid rgba(120,180,255,0.25); }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>ChinaMiun666</h1>
+      <div class="row">
+        <div class="pill">/health</div>
+        <div class="pill">/lobbies</div>
+        <div class="pill">/ws</div>
+      </div>
+      <p>Docs: <a href="/docs">/docs</a></p>
+      <p>This service is meant to be paired with the <code>strenga</code> web UI.</p>
+    </div>
+  </body>
+</html>
+""".strip()
+
+
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    return ROOT_HTML
+
+
+# ============================================================
+# CLI entrypoint
+# ============================================================
+
+
+def _install_signal_handlers(loop: asyncio.AbstractEventLoop) -> None:
+    def _ask_exit(sig: int, frame=None):
