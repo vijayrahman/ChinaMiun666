@@ -238,3 +238,51 @@ CREATE TABLE IF NOT EXISTS lobby (
   opened_at INTEGER NOT NULL,
   joined_at INTEGER,
   commit_start INTEGER,
+  reveal_start INTEGER,
+  maker_commit TEXT,
+  taker_commit TEXT,
+  maker_revealed INTEGER NOT NULL DEFAULT 0,
+  taker_revealed INTEGER NOT NULL DEFAULT 0,
+  maker_salt TEXT,
+  taker_salt TEXT,
+  maker_turbo INTEGER,
+  maker_drift INTEGER,
+  maker_sabotage INTEGER,
+  taker_turbo INTEGER,
+  taker_drift INTEGER,
+  taker_sabotage INTEGER,
+  settle_seed INTEGER,
+  maker_time INTEGER,
+  taker_time INTEGER,
+  winner_addr TEXT,
+  fee_wei INTEGER,
+  pot_wei INTEGER,
+  last_event_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_lobby_status ON lobby(status, opened_at);
+CREATE INDEX IF NOT EXISTS idx_lobby_room ON lobby(room_code);
+CREATE INDEX IF NOT EXISTS idx_lobby_maker ON lobby(maker_addr, status);
+
+CREATE TABLE IF NOT EXISTS rating (
+  season_id INTEGER NOT NULL,
+  player_addr TEXT NOT NULL,
+  rating INTEGER NOT NULL,
+  races INTEGER NOT NULL,
+  wins INTEGER NOT NULL,
+  losses INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (season_id, player_addr)
+);
+
+CREATE TABLE IF NOT EXISTS audit (
+  audit_id TEXT PRIMARY KEY,
+  ts INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  ip TEXT,
+  lobby_id TEXT,
+  actor_addr TEXT,
+  payload_json TEXT NOT NULL
+);
+"""
+
