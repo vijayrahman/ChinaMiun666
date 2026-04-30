@@ -622,3 +622,51 @@ def race_times(seed: int, laps: int, track_id: int, m: dict, t_: dict, m_reveal:
         t_pen = clamp_int((m["sabotage"] * 6 + ((seed >> 3) % 7)) // 2, 0, 60)
         m_raw = clamp_int(m_raw + m_pen, 200, 2600)
         t_raw = clamp_int(t_raw + t_pen, 200, 2600)
+    return m_raw, t_raw
+
+
+def pick_winner(maker: str, taker: str, m_time: int, t_time: int, m_rev: bool, t_rev: bool, seed: int) -> tuple[str, str]:
+    if m_rev and not t_rev:
+        return maker, taker
+    if t_rev and not m_rev:
+        return taker, maker
+    if m_time < t_time:
+        return maker, taker
+    if t_time < m_time:
+        return taker, maker
+    return (maker, taker) if (seed & 1) == 0 else (taker, maker)
+
+
+# ============================================================
+# Data access helpers
+# ============================================================
+
+
+def row_to_lobby(row: sqlite3.Row) -> LobbyOut:
+    return LobbyOut(
+        lobby_id=row["lobby_id"],
+        room_code=row["room_code"],
+        maker_addr=row["maker_addr"],
+        taker_addr=row["taker_addr"],
+        stake_wei=int(row["stake_wei"]),
+        laps=int(row["laps"]),
+        track_id=int(row["track_id"]),
+        status=LobbyStatus(row["status"]),
+        opened_at=int(row["opened_at"]),
+        joined_at=row["joined_at"],
+        commit_start=row["commit_start"],
+        reveal_start=row["reveal_start"],
+        maker_commit=row["maker_commit"],
+        taker_commit=row["taker_commit"],
+        maker_revealed=bool(row["maker_revealed"]),
+        taker_revealed=bool(row["taker_revealed"]),
+        settle_seed=row["settle_seed"],
+        maker_time=row["maker_time"],
+        taker_time=row["taker_time"],
+        winner_addr=row["winner_addr"],
+        fee_wei=row["fee_wei"],
+        pot_wei=row["pot_wei"],
+    )
+
+
+def get_lobby(lobby_id: str) -> sqlite3.Row:
