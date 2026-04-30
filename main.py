@@ -190,3 +190,51 @@ def load_config() -> AppConfig:
     session_secret = os.environ.get("CHINAMIUN666_SESSION_SECRET", b32(secrets.token_bytes(32)))
     allow_origins_raw = os.environ.get("CHINAMIUN666_CORS", "http://127.0.0.1:8787,http://localhost:8787")
     cors_allow_origins = [o.strip() for o in allow_origins_raw.split(",") if o.strip()]
+    max_ws_clients = int(os.environ.get("CHINAMIUN666_MAX_WS", "300"))
+    max_open_lobbies_per_ip = int(os.environ.get("CHINAMIUN666_MAX_OPEN_PER_IP", "12"))
+    commit_window_s = int(os.environ.get("CHINAMIUN666_COMMIT_WINDOW_S", "420"))
+    reveal_window_s = int(os.environ.get("CHINAMIUN666_REVEAL_WINDOW_S", "420"))
+    grace_window_s = int(os.environ.get("CHINAMIUN666_GRACE_WINDOW_S", "120"))
+    return AppConfig(
+        db_path=db_path,
+        bind_host=bind_host,
+        bind_port=bind_port,
+        cors_allow_origins=cors_allow_origins,
+        admin_token=admin_token,
+        session_secret=session_secret,
+        max_ws_clients=max_ws_clients,
+        max_open_lobbies_per_ip=max_open_lobbies_per_ip,
+        commit_window_s=commit_window_s,
+        reveal_window_s=reveal_window_s,
+        grace_window_s=grace_window_s,
+    )
+
+
+CFG = load_config()
+
+
+# ============================================================
+# Database
+# ============================================================
+
+
+SCHEMA = """
+PRAGMA journal_mode=WAL;
+
+CREATE TABLE IF NOT EXISTS meta (
+  k TEXT PRIMARY KEY,
+  v TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS lobby (
+  lobby_id TEXT PRIMARY KEY,
+  room_code TEXT NOT NULL,
+  maker_addr TEXT NOT NULL,
+  taker_addr TEXT,
+  stake_wei INTEGER NOT NULL,
+  laps INTEGER NOT NULL,
+  track_id INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  opened_at INTEGER NOT NULL,
+  joined_at INTEGER,
+  commit_start INTEGER,
