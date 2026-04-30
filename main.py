@@ -1102,3 +1102,51 @@ async def ws_endpoint(ws: WebSocket):
                 continue
             if op == "sub":
                 room = str(data.get("room_code", "")).strip().upper()
+                if len(room) != 6:
+                    await ws.send_json({"type": "error", "code": "BAD_ROOM", "message": "room_code must be 6 chars"})
+                    continue
+                await HUB.subscribe_room(client.client_id, room)
+                await ws.send_json({"type": "subscribed", "room_code": room, "ts": unix_ts()})
+                continue
+            if op == "unsub":
+                room = str(data.get("room_code", "")).strip().upper()
+                await HUB.unsubscribe_room(client.client_id, room)
+                await ws.send_json({"type": "unsubscribed", "room_code": room, "ts": unix_ts()})
+                continue
+            await ws.send_json({"type": "error", "code": "BAD_OP", "message": "unknown op"})
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await HUB.disconnect(client.client_id)
+
+
+# ============================================================
+# Background tasks
+# ============================================================
+
+
+async def event_fanout_loop(stop: asyncio.Event) -> None:
+    while not stop.is_set():
+        try:
+            ev = await asyncio.wait_for(BUS.next(), timeout=1.0)
+        except asyncio.TimeoutError:
+            continue
+        with contextlib.suppress(Exception):
+            await HUB.broadcast(ev)
+
+
+async def expiry_sweeper_loop(stop: asyncio.Event) -> None:
+    """
+    Sweeps old lobbies to CANCELLED if they sit too long in OPEN/COMMIT/REVEAL.
+    Keeps the list clean for the UI.
+    """
+    while not stop.is_set():
+        now = unix_ts()
+        try:
+            # OPEN older than 2 hours -> CANCELLED
+            DB.execute(
+                "UPDATE lobby SET status='CANCELLED', last_event_at=? WHERE status='OPEN' AND opened_at < ?",
+                (now, now - 2 * 3600),
+            )
+            # COMMIT older than commit_window + 10 minutes -> CANCELLED
+            DB.execute(
