@@ -574,3 +574,51 @@ HUB = WsHub()
 
 def commit_hash(player_addr: str, salt: str, turbo: int, drift: int, sabotage: int) -> str:
     # Mirror the Solidity shape: keccak(player, salt, turbo, drift, sabotage)
+    # We use blake2s for deterministic off-chain id; on-chain uses keccak.
+    payload = "|".join([normalize_addr(player_addr), salt, str(turbo), str(drift), str(sabotage)]).encode("utf-8")
+    return "0x" + keccak_stub_hex(payload)
+
+
+def make_seed(lobby_id: str, maker: str, taker: str, maker_salt: str | None, taker_salt: str | None) -> int:
+    mat = json.dumps(
+        {"lid": lobby_id, "m": maker, "t": taker, "ms": maker_salt, "ts": taker_salt, "v": "cm666"},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    h = hashlib.blake2b(mat, digest_size=8).digest()
+    return int.from_bytes(h, "big") & 0xFFFFFFFF
+
+
+def move_adjustment(turbo: int, drift: int, sabotage: int, seed: int, maker: bool) -> int:
+    s = seed
+    volatility = ((s >> (2 if maker else 3)) % 21)
+    turbo_gain = turbo * 11
+    drift_guard = drift * 7
+    drift_cost = drift * 3
+    risk = 0
+    if turbo > 0 and volatility > (drift_guard // 5):
+        risk = (volatility * turbo * 2) // 5
+    sabotage_tax = sabotage * 4
+    raw = 90 + drift_cost + sabotage_tax + risk
+    return max(0, raw - turbo_gain)
+
+
+def race_times(seed: int, laps: int, track_id: int, m: dict, t_: dict, m_reveal: bool, t_reveal: bool) -> tuple[int, int]:
+    base = 420 + laps * 68 + (track_id % 17) * 9
+    wobble_a = (seed % 29) * 3
+    wobble_b = ((seed >> 5) % 31) * 2
+    if m_reveal:
+        madj = move_adjustment(m["turbo"], m["drift"], m["sabotage"], seed, True)
+    else:
+        madj = 120 + ((seed >> 11) % 41)
+    if t_reveal:
+        tadj = move_adjustment(t_["turbo"], t_["drift"], t_["sabotage"], seed, False)
+    else:
+        tadj = 120 + ((seed >> 17) % 41)
+    m_raw = clamp_int(base + wobble_a + madj, 200, 2400)
+    t_raw = clamp_int(base + wobble_b + tadj, 200, 2400)
+    if m_reveal and t_reveal:
+        m_pen = clamp_int((t_["sabotage"] * 6 + (seed % 7)) // 2, 0, 60)
+        t_pen = clamp_int((m["sabotage"] * 6 + ((seed >> 3) % 7)) // 2, 0, 60)
+        m_raw = clamp_int(m_raw + m_pen, 200, 2600)
+        t_raw = clamp_int(t_raw + t_pen, 200, 2600)
