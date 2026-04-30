@@ -334,3 +334,51 @@ def db_audit(kind: str, ip: str | None, lobby_id: str | None, actor_addr: str | 
         (short_id("aud"), unix_ts(), kind, ip, lobby_id, actor_addr, json.dumps(payload, separators=(",", ":"))),
     )
 
+
+# ============================================================
+# Domain models
+# ============================================================
+
+
+class LobbyStatus(str, Enum):
+    OPEN = "OPEN"
+    COMMIT = "COMMIT"
+    REVEAL = "REVEAL"
+    SETTLED = "SETTLED"
+    CANCELLED = "CANCELLED"
+
+
+class LobbyOpenIn(BaseModel):
+    maker_addr: str = Field(..., description="0x address of maker")
+    stake_wei: int = Field(..., ge=1, le=10**21)
+    laps: int = Field(..., ge=2, le=24)
+    track_id: int = Field(..., ge=1, le=777)
+
+    @field_validator("maker_addr")
+    @classmethod
+    def _va(cls, v: str) -> str:
+        return normalize_addr(v)
+
+
+class LobbyOpenOut(BaseModel):
+    lobby_id: str
+    room_code: str
+    status: LobbyStatus
+    opened_at: int
+
+
+class LobbyJoinIn(BaseModel):
+    taker_addr: str
+
+    @field_validator("taker_addr")
+    @classmethod
+    def _vb(cls, v: str) -> str:
+        return normalize_addr(v)
+
+
+class CommitIn(BaseModel):
+    player_addr: str
+    commit_hash: str = Field(..., description="hex string 0x...32 bytes-ish")
+
+    @field_validator("player_addr")
+    @classmethod
