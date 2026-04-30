@@ -478,3 +478,51 @@ class EventBus:
         self._q: "asyncio.Queue[Event]" = asyncio.Queue(maxsize=5000)
         self._tail: deque[Event] = deque(maxlen=2000)
 
+    async def publish(self, ev: Event) -> None:
+        self._tail.append(ev)
+        with contextlib.suppress(asyncio.QueueFull):
+            self._q.put_nowait(ev)
+
+    def last(self, n: int = 50) -> list[Event]:
+        n = clamp_int(n, 1, 2000)
+        return list(self._tail)[-n:]
+
+    async def next(self) -> Event:
+        return await self._q.get()
+
+
+BUS = EventBus()
+
+
+class WsClient:
+    def __init__(self, ws: WebSocket, client_id: str, ip: str | None) -> None:
+        self.ws = ws
+        self.client_id = client_id
+        self.ip = ip
+        self.joined_rooms: set[str] = set()
+
+
+class WsHub:
+    def __init__(self) -> None:
+        self._clients: dict[str, WsClient] = {}
+        self._lock = asyncio.Lock()
+
+    async def connect(self, ws: WebSocket, ip: str | None) -> WsClient:
+        await ws.accept()
+        client_id = short_id("ws")
+        c = WsClient(ws, client_id, ip)
+        async with self._lock:
+            if len(self._clients) >= CFG.max_ws_clients:
+                await ws.send_json({"type": "error", "code": "WS_LIMIT", "message": "too many clients"})
+                await ws.close(code=1013)
+                raise RuntimeError("ws limit")
+            self._clients[client_id] = c
+        await ws.send_json({"type": "hello", "client_id": client_id, "ts": unix_ts()})
+        return c
+
+    async def disconnect(self, client_id: str) -> None:
+        async with self._lock:
+            self._clients.pop(client_id, None)
+
+    async def subscribe_room(self, client_id: str, room_code: str) -> None:
+        async with self._lock:
