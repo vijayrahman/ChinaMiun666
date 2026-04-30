@@ -766,3 +766,51 @@ async def api_open_lobby(payload: LobbyOpenIn, request: Request):
                 payload.stake_wei,
                 payload.laps,
                 payload.track_id,
+                now,
+                now,
+            ),
+        )
+        db_audit("LOBBY_OPEN", ip, lobby_id, payload.maker_addr, payload.model_dump())
+
+    ev = Event("lobby.opened", now, lobby_id, {"room_code": room_code, **payload.model_dump()})
+    await BUS.publish(ev)
+    await HUB.broadcast(ev)
+
+    return LobbyOpenOut(lobby_id=lobby_id, room_code=room_code, status=LobbyStatus.OPEN, opened_at=now)
+
+
+@app.get("/lobbies/{lobby_id}", response_model=LobbyOut)
+async def api_get_lobby(lobby_id: str):
+    row = get_lobby(lobby_id)
+    return row_to_lobby(row)
+
+
+@app.get("/lobbies", response_model=list[LobbyOut])
+async def api_list_lobbies(
+    status: LobbyStatus | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+):
+    if status is None:
+        rows = DB.execute("SELECT * FROM lobby ORDER BY opened_at DESC LIMIT ?", (limit,)).fetchall()
+    else:
+        rows = DB.execute(
+            "SELECT * FROM lobby WHERE status = ? ORDER BY opened_at DESC LIMIT ?",
+            (status.value, limit),
+        ).fetchall()
+    return [row_to_lobby(r) for r in rows]
+
+
+@app.post("/lobbies/{lobby_id}/join", response_model=LobbyOut)
+async def api_join_lobby(lobby_id: str, payload: LobbyJoinIn, request: Request):
+    ip = parse_client_ip(request.headers.get("x-forwarded-for"), getattr(request.client, "host", None))
+    now = unix_ts()
+    with tx():
+        row = get_lobby(lobby_id)
+        if row["status"] != "OPEN":
+            raise ServiceError("NOT_OPEN", "lobby is not open", 409)
+        if normalize_addr(payload.taker_addr) == normalize_addr(row["maker_addr"]):
+            raise ServiceError("BAD_INPUT", "maker cannot join own lobby", 400)
+        DB.execute(
+            """
+            UPDATE lobby
+            SET taker_addr=?, status='COMMIT', joined_at=?, commit_start=?, last_event_at=?
