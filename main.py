@@ -526,3 +526,51 @@ class WsHub:
 
     async def subscribe_room(self, client_id: str, room_code: str) -> None:
         async with self._lock:
+            c = self._clients.get(client_id)
+            if not c:
+                return
+            c.joined_rooms.add(room_code)
+
+    async def unsubscribe_room(self, client_id: str, room_code: str) -> None:
+        async with self._lock:
+            c = self._clients.get(client_id)
+            if not c:
+                return
+            c.joined_rooms.discard(room_code)
+
+    async def broadcast(self, ev: Event) -> None:
+        msg = {"type": "event", "kind": ev.kind, "ts": ev.ts, "lobby_id": ev.lobby_id, "payload": ev.payload}
+        async with self._lock:
+            clients = list(self._clients.values())
+        # Best-effort: slow clients won't block
+        for c in clients:
+            try:
+                await c.ws.send_json(msg)
+            except Exception:
+                with contextlib.suppress(Exception):
+                    await c.ws.close()
+                await self.disconnect(c.client_id)
+
+    async def broadcast_room(self, room_code: str, ev: Event) -> None:
+        msg = {"type": "event", "kind": ev.kind, "ts": ev.ts, "lobby_id": ev.lobby_id, "payload": ev.payload}
+        async with self._lock:
+            clients = [c for c in self._clients.values() if room_code in c.joined_rooms]
+        for c in clients:
+            try:
+                await c.ws.send_json(msg)
+            except Exception:
+                with contextlib.suppress(Exception):
+                    await c.ws.close()
+                await self.disconnect(c.client_id)
+
+
+HUB = WsHub()
+
+
+# ============================================================
+# Race logic (off-chain mirror)
+# ============================================================
+
+
+def commit_hash(player_addr: str, salt: str, turbo: int, drift: int, sabotage: int) -> str:
+    # Mirror the Solidity shape: keccak(player, salt, turbo, drift, sabotage)
