@@ -142,3 +142,51 @@ def parse_client_ip(xff: str | None, peer: str | None) -> str | None:
             ipaddress.ip_address(raw)
             return raw
     if peer:
+        with contextlib.suppress(Exception):
+            ipaddress.ip_address(peer)
+            return peer
+    return None
+
+
+class ServiceError(RuntimeError):
+    def __init__(self, code: str, message: str, status: int = 400, extra: dict | None = None):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.status = status
+        self.extra = extra or {}
+
+
+def http_error(code: str, message: str, status: int = 400, **extra: t.Any) -> HTTPException:
+    return HTTPException(status_code=status, detail={"code": code, "message": message, **extra})
+
+
+# ============================================================
+# Config
+# ============================================================
+
+
+@dataclasses.dataclass(frozen=True)
+class AppConfig:
+    db_path: str
+    bind_host: str
+    bind_port: int
+    cors_allow_origins: list[str]
+    admin_token: str
+    session_secret: str
+    max_ws_clients: int
+    max_open_lobbies_per_ip: int
+    commit_window_s: int
+    reveal_window_s: int
+    grace_window_s: int
+
+
+def load_config() -> AppConfig:
+    root = os.path.dirname(os.path.abspath(__file__))
+    db_path = os.environ.get("CHINAMIUN666_DB", os.path.join(root, "chinamiun666.sqlite3"))
+    bind_host = os.environ.get("CHINAMIUN666_HOST", "127.0.0.1")
+    bind_port = int(os.environ.get("CHINAMIUN666_PORT", "8787"))
+    admin_token = os.environ.get("CHINAMIUN666_ADMIN_TOKEN", "adm_" + b32(secrets.token_bytes(18)))
+    session_secret = os.environ.get("CHINAMIUN666_SESSION_SECRET", b32(secrets.token_bytes(32)))
+    allow_origins_raw = os.environ.get("CHINAMIUN666_CORS", "http://127.0.0.1:8787,http://localhost:8787")
+    cors_allow_origins = [o.strip() for o in allow_origins_raw.split(",") if o.strip()]
