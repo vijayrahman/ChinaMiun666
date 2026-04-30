@@ -718,3 +718,51 @@ async def health():
 
 
 @app.get("/config", response_model=AdminConfigOut)
+async def get_config(_: None = Depends(admin_guard)):
+    return AdminConfigOut(
+        commit_window_s=CFG.commit_window_s,
+        reveal_window_s=CFG.reveal_window_s,
+        grace_window_s=CFG.grace_window_s,
+        max_ws_clients=CFG.max_ws_clients,
+        max_open_lobbies_per_ip=CFG.max_open_lobbies_per_ip,
+    )
+
+
+@app.get("/public")
+async def public_info():
+    return {
+        "service": "ChinaMiun666",
+        "ts": unix_ts(),
+        "commit_window_s": CFG.commit_window_s,
+        "reveal_window_s": CFG.reveal_window_s,
+        "grace_window_s": CFG.grace_window_s,
+        "cors": CFG.cors_allow_origins,
+        "note": "off-chain mirror; on-chain settlement uses RelayBOSS12",
+    }
+
+
+@app.post("/lobbies/open", response_model=LobbyOpenOut)
+async def api_open_lobby(payload: LobbyOpenIn, request: Request):
+    ip = parse_client_ip(request.headers.get("x-forwarded-for"), getattr(request.client, "host", None))
+    if open_lobbies_for_ip(ip) >= CFG.max_open_lobbies_per_ip:
+        raise http_error("RATE_LIMIT", "too many open lobbies from this ip", status=429)
+
+    lobby_id = short_id("lob")
+    room_code = random_room_code()
+    now = unix_ts()
+
+    with tx():
+        DB.execute(
+            """
+            INSERT INTO lobby(
+              lobby_id, room_code, maker_addr, stake_wei, laps, track_id, status,
+              opened_at, last_event_at
+            ) VALUES(?, ?, ?, ?, ?, ?, 'OPEN', ?, ?)
+            """,
+            (
+                lobby_id,
+                room_code,
+                payload.maker_addr,
+                payload.stake_wei,
+                payload.laps,
+                payload.track_id,
