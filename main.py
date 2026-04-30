@@ -1246,3 +1246,31 @@ async def root():
 
 def _install_signal_handlers(loop: asyncio.AbstractEventLoop) -> None:
     def _ask_exit(sig: int, frame=None):
+        LOG.warning("signal %s received, shutting down", sig)
+        for task in asyncio.all_tasks(loop=loop):
+            if task is asyncio.current_task(loop=loop):
+                continue
+        # uvicorn handles its own signals; for python app.py we just exit.
+
+    for s in (signal.SIGINT, signal.SIGTERM):
+        with contextlib.suppress(Exception):
+            signal.signal(s, _ask_exit)
+
+
+def main() -> int:
+    try:
+        import uvicorn  # type: ignore
+    except Exception as e:
+        print("Missing dependency: uvicorn. Install via requirements.txt", file=sys.stderr)
+        print(str(e), file=sys.stderr)
+        return 2
+
+    LOG.setLevel(logging.INFO)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s - %(message)s")
+    LOG.info("admin token (set env to override): %s", CFG.admin_token)
+    uvicorn.run("app:app", host=CFG.bind_host, port=CFG.bind_port, reload=False, log_level="info")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
