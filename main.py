@@ -286,3 +286,51 @@ CREATE TABLE IF NOT EXISTS audit (
 );
 """
 
+
+def db_connect() -> sqlite3.Connection:
+    conn = sqlite3.connect(CFG.db_path, isolation_level=None, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+DB = db_connect()
+
+
+def db_init() -> None:
+    for stmt in SCHEMA.split(";"):
+        s = stmt.strip()
+        if not s:
+            continue
+        DB.execute(s)
+    DB.execute("INSERT OR IGNORE INTO meta(k, v) VALUES('schema_version', '1')")
+
+
+db_init()
+
+
+@contextlib.contextmanager
+def tx():
+    try:
+        DB.execute("BEGIN")
+        yield
+        DB.execute("COMMIT")
+    except Exception:
+        DB.execute("ROLLBACK")
+        raise
+
+
+def db_get_meta(k: str) -> str | None:
+    row = DB.execute("SELECT v FROM meta WHERE k = ?", (k,)).fetchone()
+    return row["v"] if row else None
+
+
+def db_set_meta(k: str, v: str) -> None:
+    DB.execute("INSERT INTO meta(k, v) VALUES(?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v", (k, v))
+
+
+def db_audit(kind: str, ip: str | None, lobby_id: str | None, actor_addr: str | None, payload: dict) -> None:
+    DB.execute(
+        "INSERT INTO audit(audit_id, ts, kind, ip, lobby_id, actor_addr, payload_json) VALUES(?, ?, ?, ?, ?, ?, ?)",
+        (short_id("aud"), unix_ts(), kind, ip, lobby_id, actor_addr, json.dumps(payload, separators=(",", ":"))),
+    )
+
