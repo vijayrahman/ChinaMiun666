@@ -382,3 +382,51 @@ class CommitIn(BaseModel):
 
     @field_validator("player_addr")
     @classmethod
+    def _vc(cls, v: str) -> str:
+        return normalize_addr(v)
+
+    @field_validator("commit_hash")
+    @classmethod
+    def _vd(cls, v: str) -> str:
+        x = v.strip()
+        if not is_probably_hex(x):
+            raise ValueError("commit_hash must be hex")
+        return x.lower()
+
+
+class RevealIn(BaseModel):
+    player_addr: str
+    salt: str
+    turbo: int = Field(..., ge=0, le=10)
+    drift: int = Field(..., ge=0, le=10)
+    sabotage: int = Field(..., ge=0, le=6)
+
+    @field_validator("player_addr")
+    @classmethod
+    def _ve(cls, v: str) -> str:
+        return normalize_addr(v)
+
+    @field_validator("salt")
+    @classmethod
+    def _vf(cls, v: str) -> str:
+        s = v.strip()
+        if not s:
+            raise ValueError("salt required")
+        if len(s) > 128:
+            raise ValueError("salt too long")
+        return s
+
+
+class LobbyOut(BaseModel):
+    lobby_id: str
+    room_code: str
+    maker_addr: str
+    taker_addr: str | None
+    stake_wei: int
+    laps: int
+    track_id: int
+    status: LobbyStatus
+    opened_at: int
+    joined_at: int | None
+    commit_start: int | None
+    reveal_start: int | None
