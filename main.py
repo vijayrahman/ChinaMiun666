@@ -862,3 +862,51 @@ async def api_commit(lobby_id: str, payload: CommitIn, request: Request):
             )
 
         # Transition when both commits in
+        row_mid = get_lobby(lobby_id)
+        if row_mid["maker_commit"] and row_mid["taker_commit"]:
+            DB.execute(
+                "UPDATE lobby SET status='REVEAL', reveal_start=?, last_event_at=? WHERE lobby_id=?",
+                (now, now, lobby_id),
+            )
+
+        db_audit("COMMIT", ip, lobby_id, player, payload.model_dump())
+
+    row2 = get_lobby(lobby_id)
+    ev = Event("race.commit", now, lobby_id, {"player_addr": payload.player_addr})
+    await BUS.publish(ev)
+    await HUB.broadcast_room(row2["room_code"], ev)
+    return row_to_lobby(row2)
+
+
+@app.post("/lobbies/{lobby_id}/reveal", response_model=LobbyOut)
+async def api_reveal(lobby_id: str, payload: RevealIn, request: Request):
+    ip = parse_client_ip(request.headers.get("x-forwarded-for"), getattr(request.client, "host", None))
+    now = unix_ts()
+    with tx():
+        row = get_lobby(lobby_id)
+        if row["status"] != "REVEAL":
+            raise ServiceError("BAD_STATE", "lobby not in reveal", 409)
+        if now > int(row["reveal_start"]) + CFG.reveal_window_s:
+            raise ServiceError("TOO_LATE", "reveal window expired", 410)
+
+        player = payload.player_addr
+        maker = normalize_addr(row["maker_addr"])
+        taker = normalize_addr(row["taker_addr"] or "")
+        if player not in (maker, taker):
+            raise ServiceError("NOT_PLAYER", "address not in lobby", 403)
+
+        expected = commit_hash(player, payload.salt, payload.turbo, payload.drift, payload.sabotage)
+
+        if player == maker:
+            if int(row["maker_revealed"]) == 1:
+                raise ServiceError("ALREADY", "maker already revealed", 409)
+            if not row["maker_commit"] or row["maker_commit"].lower() != expected.lower():
+                raise ServiceError("MISMATCH", "maker reveal does not match commit", 400)
+            DB.execute(
+                """
+                UPDATE lobby
+                SET maker_revealed=1, maker_salt=?, maker_turbo=?, maker_drift=?, maker_sabotage=?, last_event_at=?
+                WHERE lobby_id=?
+                """,
+                (payload.salt, payload.turbo, payload.drift, payload.sabotage, now, lobby_id),
+            )
