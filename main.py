@@ -430,3 +430,51 @@ class LobbyOut(BaseModel):
     joined_at: int | None
     commit_start: int | None
     reveal_start: int | None
+    maker_commit: str | None
+    taker_commit: str | None
+    maker_revealed: bool
+    taker_revealed: bool
+    settle_seed: int | None
+    maker_time: int | None
+    taker_time: int | None
+    winner_addr: str | None
+    fee_wei: int | None
+    pot_wei: int | None
+
+
+class RatingOut(BaseModel):
+    season_id: int
+    player_addr: str
+    rating: int
+    races: int
+    wins: int
+    losses: int
+    updated_at: int
+
+
+class AdminConfigOut(BaseModel):
+    commit_window_s: int
+    reveal_window_s: int
+    grace_window_s: int
+    max_ws_clients: int
+    max_open_lobbies_per_ip: int
+
+
+# ============================================================
+# In-memory event bus + WS hub
+# ============================================================
+
+
+@dataclasses.dataclass
+class Event:
+    kind: str
+    ts: int
+    lobby_id: str | None
+    payload: dict
+
+
+class EventBus:
+    def __init__(self) -> None:
+        self._q: "asyncio.Queue[Event]" = asyncio.Queue(maxsize=5000)
+        self._tail: deque[Event] = deque(maxlen=2000)
+
