@@ -814,3 +814,51 @@ async def api_join_lobby(lobby_id: str, payload: LobbyJoinIn, request: Request):
             """
             UPDATE lobby
             SET taker_addr=?, status='COMMIT', joined_at=?, commit_start=?, last_event_at=?
+            WHERE lobby_id=?
+            """,
+            (payload.taker_addr, now, now, now, lobby_id),
+        )
+        db_audit("LOBBY_JOIN", ip, lobby_id, payload.taker_addr, payload.model_dump())
+
+    row2 = get_lobby(lobby_id)
+    ev = Event("lobby.joined", now, lobby_id, {"lobby_id": lobby_id, "taker_addr": payload.taker_addr})
+    await BUS.publish(ev)
+    await HUB.broadcast_room(row2["room_code"], ev)
+    return row_to_lobby(row2)
+
+
+@app.post("/lobbies/{lobby_id}/commit", response_model=LobbyOut)
+async def api_commit(lobby_id: str, payload: CommitIn, request: Request):
+    ip = parse_client_ip(request.headers.get("x-forwarded-for"), getattr(request.client, "host", None))
+    now = unix_ts()
+    with tx():
+        row = get_lobby(lobby_id)
+        if row["status"] != "COMMIT":
+            raise ServiceError("BAD_STATE", "lobby not in commit", 409)
+        if not row["taker_addr"]:
+            raise ServiceError("BAD_STATE", "no taker yet", 409)
+        if now > int(row["commit_start"]) + CFG.commit_window_s:
+            raise ServiceError("TOO_LATE", "commit window expired", 410)
+
+        player = payload.player_addr
+        maker = normalize_addr(row["maker_addr"])
+        taker = normalize_addr(row["taker_addr"])
+        if player not in (maker, taker):
+            raise ServiceError("NOT_PLAYER", "address not in lobby", 403)
+
+        if player == maker:
+            if row["maker_commit"]:
+                raise ServiceError("ALREADY", "maker already committed", 409)
+            DB.execute(
+                "UPDATE lobby SET maker_commit=?, last_event_at=? WHERE lobby_id=?",
+                (payload.commit_hash, now, lobby_id),
+            )
+        else:
+            if row["taker_commit"]:
+                raise ServiceError("ALREADY", "taker already committed", 409)
+            DB.execute(
+                "UPDATE lobby SET taker_commit=?, last_event_at=? WHERE lobby_id=?",
+                (payload.commit_hash, now, lobby_id),
+            )
+
+        # Transition when both commits in
