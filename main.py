@@ -1150,3 +1150,51 @@ async def expiry_sweeper_loop(stop: asyncio.Event) -> None:
             )
             # COMMIT older than commit_window + 10 minutes -> CANCELLED
             DB.execute(
+                """
+                UPDATE lobby SET status='CANCELLED', last_event_at=?
+                WHERE status='COMMIT' AND commit_start IS NOT NULL AND commit_start < ?
+                """,
+                (now, now - (CFG.commit_window_s + 600)),
+            )
+            # REVEAL older than reveal_window + grace + 10 minutes -> allow settle by marking flag via audit only
+            DB.execute(
+                """
+                UPDATE lobby SET last_event_at=?
+                WHERE status='REVEAL' AND reveal_start IS NOT NULL AND reveal_start < ?
+                """,
+                (now, now - (CFG.reveal_window_s + CFG.grace_window_s + 600)),
+            )
+        except Exception:
+            LOG.exception("sweeper failed")
+        await asyncio.sleep(5.0)
+
+
+@app.on_event("startup")
+async def _startup():
+    logging.basicConfig(
+        level=os.environ.get("CHINAMIUN666_LOG", "INFO"),
+        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
+    )
+    LOG.info("starting with db=%s port=%s", CFG.db_path, CFG.bind_port)
+    stop = asyncio.Event()
+    app.state._stop = stop
+    app.state._fanout_task = asyncio.create_task(event_fanout_loop(stop))
+    app.state._sweep_task = asyncio.create_task(expiry_sweeper_loop(stop))
+
+
+@app.on_event("shutdown")
+async def _shutdown():
+    stop: asyncio.Event = getattr(app.state, "_stop", None)
+    if stop:
+        stop.set()
+    for name in ("_fanout_task", "_sweep_task"):
+        task = getattr(app.state, name, None)
+        if task:
+            task.cancel()
+            with contextlib.suppress(Exception):
+                await task
+    with contextlib.suppress(Exception):
+        DB.close()
+
+
+# ============================================================
