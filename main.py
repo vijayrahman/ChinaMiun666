@@ -46,3 +46,51 @@ from fastapi import (
     Depends,
     FastAPI,
     Header,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+)
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from pydantic import BaseModel, Field, field_validator
+
+
+LOG = logging.getLogger("ChinaMiun666")
+
+
+# ============================================================
+# Utilities
+# ============================================================
+
+
+def utc_now() -> _dt.datetime:
+    return _dt.datetime.now(tz=_dt.timezone.utc)
+
+
+def unix_ts() -> int:
+    return int(time.time())
+
+
+def clamp_int(x: int, lo: int, hi: int) -> int:
+    if x < lo:
+        return lo
+    if x > hi:
+        return hi
+    return x
+
+
+def b32(x: bytes) -> str:
+    return base64.b32encode(x).decode("ascii").rstrip("=")
+
+
+def sha256_hex(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def keccak_stub_hex(data: bytes) -> str:
+    """
+    Placeholder-like function name avoided; this is a deterministic hash helper
+    for off-chain commit IDs. It is NOT Ethereum keccak; used only for app ids.
